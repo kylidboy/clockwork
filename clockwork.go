@@ -54,6 +54,8 @@ type (
 	// Job struct handles all the data required to
 	// schedule and run jobs.
 	Job struct {
+		mtx *sync.Mutex
+
 		stopped bool
 
 		identifier string
@@ -124,14 +126,18 @@ func (j *Job) Info() JobInfo {
 }
 
 func (j *Job) Stopped() bool {
+	j.mtx.Lock()
+	defer j.mtx.Unlock()
 	return j.stopped
 }
 
 func (j *Job) Stop() {
+	j.mtx.Lock()
 	if !j.stopped {
 		j.nextScheduledRun = time1970
 		j.stopped = true
 	}
+	j.mtx.Unlock()
 
 	j.scheduler.mtx.Lock()
 	defer j.scheduler.mtx.Unlock()
@@ -210,11 +216,16 @@ func (j *Job) At(t string) *Job {
 func (j *Job) Do(function func()) string {
 	j.workFunc = function
 	j.scheduleNextRun()
+	j.scheduler.mtx.Lock()
 	j.scheduler.jobs = append(j.scheduler.jobs, *j)
+	j.scheduler.mtx.Unlock()
 	return j.identifier
 }
 
 func (j *Job) due() bool {
+	j.mtx.Lock()
+	defer j.mtx.Unlock()
+
 	now := timeNow()
 	if now.After(j.nextScheduledRun) {
 		return true
@@ -258,6 +269,8 @@ func (j *Job) unitNotWEEKDAY() bool {
 }
 
 func (j *Job) scheduleNextRun() {
+	j.mtx.Lock()
+	defer j.mtx.Unlock()
 	if j.stopped {
 		return
 	}
@@ -405,7 +418,7 @@ func (j *Job) scheduleNextRun() {
 			// TODO: Turn this into err
 		}
 
-		j.scheduler.logger.Debug("Scheduled for ", j.nextScheduledRun)
+		// j.scheduler.logger.Debug("Scheduled for ", j.nextScheduledRun)
 	}
 	return
 }
@@ -592,7 +605,10 @@ func (s *Scheduler) Schedule() *Job {
 		atMinute:         0,
 		workFunc:         nil,
 		nextScheduledRun: time.Time{}, // zero value
+
+		mtx: &sync.Mutex{},
 	}
+
 	return &newJob
 }
 
